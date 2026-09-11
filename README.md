@@ -1,0 +1,2 @@
+# DiscordMyBotTester
+My bot test
