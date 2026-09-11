@@ -9,9 +9,13 @@ from discord.ext import commands
 from aiohttp import web
 
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+# =========================
+# Environment
+# =========================
 
-if not TOKEN:
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+
+if not DISCORD_TOKEN:
     raise RuntimeError("DISCORD_TOKEN environment variable is not set")
 
 
@@ -28,6 +32,10 @@ bot = commands.Bot(
 )
 
 
+# =========================
+# Bot Ready
+# =========================
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} ({bot.user.id})")
@@ -40,18 +48,21 @@ async def on_ready():
         traceback.print_exc()
 
 
+# =========================
+# /timeoutmemberslist
+# =========================
+
 @bot.tree.command(
     name="timeoutmemberslist",
     description="現在タイムアウトされているメンバーの一覧を表示します"
 )
 @discord.app_commands.default_permissions(moderate_members=True)
 @discord.app_commands.checks.has_permissions(moderate_members=True)
-async def timeoutmemberslist(
-    interaction: discord.Interaction
-):
-    await interaction.response.defer()
+async def timeoutmemberslist(interaction: discord.Interaction):
 
     try:
+        await interaction.response.defer()
+
         guild = interaction.guild
 
         if guild is None:
@@ -67,9 +78,8 @@ async def timeoutmemberslist(
             members.append(member)
 
         print(
-            f"[timeoutmemberslist] "
-            f"Fetched {len(members)} member(s) "
-            f"from {guild.name} ({guild.id})"
+            f"Checking timeout members in {guild.name}: "
+            f"{len(members)} members"
         )
 
         now = datetime.now(timezone.utc)
@@ -77,21 +87,23 @@ async def timeoutmemberslist(
         timeout_members = []
 
         for member in members:
-            timeout_until = member.communication_disabled_until
+
+            # discord.py 2.x の正しい属性
+            timeout_until = member.timed_out_until
 
             if timeout_until is not None and timeout_until > now:
                 timeout_members.append(
                     (member, timeout_until)
                 )
 
-        # タイムアウト中のメンバーがいない場合
+        # タイムアウト中の人がいない場合
         if not timeout_members:
             await interaction.followup.send(
                 "現在タイムアウトされているメンバーはいません。"
             )
             return
 
-        # ユーザー名順
+        # 名前順
         timeout_members.sort(
             key=lambda x: x[0].display_name.lower()
         )
@@ -99,6 +111,7 @@ async def timeoutmemberslist(
         lines = []
 
         for member, timeout_until in timeout_members:
+
             timestamp = int(timeout_until.timestamp())
 
             line = (
@@ -109,17 +122,19 @@ async def timeoutmemberslist(
 
             lines.append(line)
 
-        # Discordの2000文字制限を考慮して分割
+        # Discordのメッセージ上限を考慮して分割
         chunks = []
         current = ""
 
         for line in lines:
-            if len(current) + len(line) + 1 > 1900:
-                if current:
-                    chunks.append(current)
 
+            if len(current) + len(line) + 1 > 1900:
+
+                chunks.append(current)
                 current = line
+
             else:
+
                 if current:
                     current += "\n"
 
@@ -138,31 +153,21 @@ async def timeoutmemberslist(
         for chunk in chunks[1:]:
             await interaction.followup.send(chunk)
 
-        print(
-            f"[timeoutmemberslist] "
-            f"Found {total} timed-out member(s)"
-        )
-
     except Exception:
-        print(
-            "[timeoutmemberslist] Unexpected error:"
-        )
+
+        print("Error in /timeoutmemberslist:")
         traceback.print_exc()
 
-        error_text = (
-            "❌ コマンドの実行中にエラーが発生しました。\n"
-            "RenderのLogsを確認してください。"
-        )
-
         if interaction.response.is_done():
+
             await interaction.followup.send(
-                error_text,
-                ephemeral=True
+                "❌ コマンドの実行中にエラーが発生しました。"
             )
+
         else:
+
             await interaction.response.send_message(
-                error_text,
-                ephemeral=True
+                "❌ コマンドの実行中にエラーが発生しました。"
             )
 
 
@@ -173,9 +178,10 @@ async def timeoutmemberslist(
 @timeoutmemberslist.error
 async def timeoutmemberslist_error(
     interaction: discord.Interaction,
-    error: discord.app_commands.AppCommandError
+    error
 ):
-    print("[timeoutmemberslist.error]")
+
+    print("Slash command permission/error:")
     traceback.print_exception(
         type(error),
         error,
@@ -186,47 +192,56 @@ async def timeoutmemberslist_error(
         error,
         discord.app_commands.errors.MissingPermissions
     ):
+
         message = (
             "❌ このコマンドを使用するには "
             "**メンバーをタイムアウト** 権限が必要です。"
         )
+
     else:
+
         message = (
-            f"❌ エラー: `{type(error).__name__}: {error}`"
+            "❌ コマンドの実行中にエラーが発生しました。"
         )
 
     if interaction.response.is_done():
-        await interaction.followup.send(
-            message,
-            ephemeral=True
-        )
+
+        await interaction.followup.send(message)
+
     else:
-        await interaction.response.send_message(
-            message,
-            ephemeral=True
-        )
+
+        await interaction.response.send_message(message)
 
 
 # =========================
-# Render用 HTTP Server
+# Render HTTP Server
 # =========================
 
 async def health(request):
+
     return web.Response(
         text="Discord bot is running!"
     )
 
 
 async def start_web_server():
+
     app = web.Application()
 
-    app.router.add_get("/", health)
+    app.router.add_get(
+        "/",
+        health
+    )
 
     port = int(
-        os.environ.get("PORT", 10000)
+        os.environ.get(
+            "PORT",
+            10000
+        )
     )
 
     runner = web.AppRunner(app)
+
     await runner.setup()
 
     site = web.TCPSite(
@@ -243,14 +258,16 @@ async def start_web_server():
 
 
 # =========================
-# 起動
+# Main
 # =========================
 
 async def main():
+
     await start_web_server()
 
-    await bot.start(TOKEN)
+    await bot.start(DISCORD_TOKEN)
 
 
 if __name__ == "__main__":
+
     asyncio.run(main())
