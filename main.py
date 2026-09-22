@@ -110,13 +110,10 @@ class OutputConfirmView(discord.ui.View):
         )
 
         for index, chunk in enumerate(self.chunks):
-            embed = create_embed(
-                self.title if index == 0 else f"{self.title}（続き）",
-                chunk
-            )
-
+            # メンバーのメンションは通常の本文として送信し、
+            # Discord上でタップできる状態を維持する。
             await interaction.followup.send(
-                embed=embed
+                content=chunk
             )
 
     @discord.ui.button(
@@ -165,12 +162,11 @@ async def send_member_list(
         )
         return
 
+    # メンバーのメンション部分はEmbedに入れず、
+    # 通常のメッセージ本文として送信することでタップ可能にする。
     if len(chunks) == 1:
         await interaction.followup.send(
-            embed=create_embed(
-                title,
-                chunks[0]
-            )
+            content=chunks[0]
         )
         return
 
@@ -423,10 +419,7 @@ class RoleListView(discord.ui.View):
 
                 if len(chunks) == 1:
                     await interaction.response.send_message(
-                        embed=create_embed(
-                            f"👥 {selected_role.name}",
-                            chunks[0]
-                        )
+                        content=chunks[0]
                     )
                     return
 
