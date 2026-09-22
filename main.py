@@ -1,4 +1,5 @@
 import os
+import random
 import asyncio
 import traceback
 from datetime import datetime, timezone
@@ -14,7 +15,25 @@ if not DISCORD_TOKEN:
     raise RuntimeError("DISCORD_TOKEN environment variable is not set")
 
 MAX_MESSAGE_LENGTH = 1900
+
+# =========================
+# Embed Color Settings
+# =========================
+
+# Bot全体で共有されるEmbedカラー
 EMBED_COLOR = discord.Color.green()
+
+# Bot開発者本人のDiscord User ID
+# ↓ここを自分のDiscord User IDに変更してください
+DEVELOPER_ID = os.getenv("DEVELOPER_ID")
+
+if not DEVELOPER_ID:
+    raise RuntimeError("DEVELOPER_ID environment variable is not set")
+
+DEVELOPER_ID = int(DEVELOPER_ID)
+
+# ランダムEmbedカラーイベントが開催中か
+RANDOM_COLOR_EVENT = False
 
 intents = discord.Intents.default()
 intents.members = True
@@ -23,6 +42,129 @@ bot = commands.Bot(
     command_prefix="!",
     intents=intents
 )
+
+
+def is_developer(interaction: discord.Interaction):
+    return interaction.user.id == DEVELOPER_ID
+
+
+COLOR_CHOICES = [
+    discord.app_commands.Choice(name="🔴 Red", value="FF0000"),
+    discord.app_commands.Choice(name="🟠 Orange", value="FF8000"),
+    discord.app_commands.Choice(name="🟡 Yellow", value="FFFF00"),
+    discord.app_commands.Choice(name="🟢 Green", value="00FF00"),
+    discord.app_commands.Choice(name="🔵 Cyan", value="00FFFF"),
+    discord.app_commands.Choice(name="🔷 Blue", value="0080FF"),
+    discord.app_commands.Choice(name="🟣 Purple", value="8000FF"),
+    discord.app_commands.Choice(name="🩷 Pink", value="FF00AA"),
+    discord.app_commands.Choice(name="🟤 Brown", value="8B4513"),
+    discord.app_commands.Choice(name="⚫ Black", value="000000"),
+    discord.app_commands.Choice(name="⚪ White", value="FFFFFF"),
+    discord.app_commands.Choice(name="🌸 Rose", value="FF4F81"),
+    discord.app_commands.Choice(name="🌊 Deep Blue", value="0047AB"),
+    discord.app_commands.Choice(name="🍷 Burgundy", value="800020"),
+    discord.app_commands.Choice(name="🌌 Dark Purple", value="301934"),
+]
+
+
+@bot.tree.command(
+    name="changeembedcolor",
+    description="(DEV)BotのEmbedカラーを変更します"
+)
+@discord.app_commands.describe(
+    color="変更するEmbedカラー"
+)
+@discord.app_commands.choices(
+    color=COLOR_CHOICES
+)
+async def changeembedcolor(
+    interaction: discord.Interaction,
+    color: discord.app_commands.Choice[str]
+):
+    if not is_developer(interaction):
+        await interaction.response.send_message(
+            "❌ このコマンドはBot開発者のみ使用できます。",
+            ephemeral=True
+        )
+        return
+
+    global EMBED_COLOR
+
+    EMBED_COLOR = discord.Color(int(color.value, 16))
+
+    await interaction.response.send_message(
+        f"🎨 Embed color changed to **{color.name}**."
+    )
+
+
+@bot.tree.command(
+    name="truerandomembedcolorevent",
+    description="(DEV)ランダムEmbedカラーイベントを開始します"
+)
+async def truerandomembedcolorevent(
+    interaction: discord.Interaction
+):
+    if not is_developer(interaction):
+        await interaction.response.send_message(
+            "❌ このコマンドはBot開発者のみ使用できます。",
+            ephemeral=True
+        )
+        return
+
+    global RANDOM_COLOR_EVENT
+
+    RANDOM_COLOR_EVENT = True
+
+    await interaction.response.send_message(
+        "started now!!"
+    )
+
+
+@bot.tree.command(
+    name="falserandomembedcolorevent",
+    description="(DEV)ランダムEmbedカラーイベントを終了します"
+)
+async def falserandomembedcolorevent(
+    interaction: discord.Interaction
+):
+    if not is_developer(interaction):
+        await interaction.response.send_message(
+            "❌ このコマンドはBot開発者のみ使用できます。",
+            ephemeral=True
+        )
+        return
+
+    global RANDOM_COLOR_EVENT
+
+    RANDOM_COLOR_EVENT = False
+
+    await interaction.response.send_message(
+        "ended now."
+    )
+
+
+@bot.tree.command(
+    name="serverembedrandomcolor",
+    description="Embedカラーをランダムに変更します"
+)
+async def serverembedrandomcolor(
+    interaction: discord.Interaction
+):
+    if not RANDOM_COLOR_EVENT:
+        await interaction.response.send_message(
+            "❌ Random Embed Color Event is not active.",
+            ephemeral=True
+        )
+        return
+
+    global EMBED_COLOR
+
+    random_value = random.randint(0x000000, 0xFFFFFF)
+    EMBED_COLOR = discord.Color(random_value)
+
+    await interaction.response.send_message(
+        "🎨 Embed color changed randomly!"
+    )
 
 
 def create_embed(title: str, description: str):
