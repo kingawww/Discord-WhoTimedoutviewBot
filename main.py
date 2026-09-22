@@ -115,8 +115,7 @@ async def timeoutmemberslist(interaction: discord.Interaction):
             timestamp = int(timeout_until.timestamp())
 
             line = (
-                f"• {member.display_name} "
-                f"({member.mention}) "
+                f"• {member.mention} "
                 f"・解除 <t:{timestamp}:R>"
             )
 
