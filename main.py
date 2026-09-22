@@ -8,20 +8,13 @@ from discord.ext import commands
 
 from aiohttp import web
 
-
-# =========================
-# Environment
-# =========================
-
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 if not DISCORD_TOKEN:
     raise RuntimeError("DISCORD_TOKEN environment variable is not set")
 
-
-# =========================
-# Discord Bot
-# =========================
+MAX_MESSAGE_LENGTH = 1900
+EMBED_COLOR = discord.Color.green()
 
 intents = discord.Intents.default()
 intents.members = True
@@ -32,62 +25,26 @@ bot = commands.Bot(
 )
 
 
-# =========================
-# 共通設定
-# =========================
+def create_embed(title: str, description: str):
+    return discord.Embed(
+        title=title,
+        description=description,
+        color=EMBED_COLOR
+    )
 
-# Discordの2000文字制限より余裕を持たせる
-MAX_MESSAGE_LENGTH = 1900
-
-
-# =========================
-# メンバー取得
-# =========================
-
-async def fetch_all_members(guild: discord.Guild):
-
-    members = []
-
-    async for member in guild.fetch_members(limit=None):
-        members.append(member)
-
-    return members
-
-
-# =========================
-# 長いメッセージを分割
-# =========================
 
 def split_message(lines, max_length=MAX_MESSAGE_LENGTH):
-
     chunks = []
     current = ""
 
     for line in lines:
-
-        # 1行そのものが長すぎる場合
-        if len(line) > max_length:
-
+        if len(current) + len(line) + 1 > max_length:
             if current:
                 chunks.append(current)
-                current = ""
-
-            # 1行をさらに分割
-            for i in range(0, len(line), max_length):
-                chunks.append(line[i:i + max_length])
-
-            continue
-
-        if current and len(current) + len(line) + 1 > max_length:
-
-            chunks.append(current)
             current = line
-
         else:
-
             if current:
                 current += "\n"
-
             current += line
 
     if current:
@@ -96,201 +53,171 @@ def split_message(lines, max_length=MAX_MESSAGE_LENGTH):
     return chunks
 
 
-# =========================
-# 2000文字超過確認View
-# =========================
+async def fetch_all_members(guild: discord.Guild):
+    members = []
+
+    async for member in guild.fetch_members(limit=None):
+        members.append(member)
+
+    return members
+
 
 class OutputConfirmView(discord.ui.View):
-
-    def __init__(self, author_id: int, chunks):
-
-        super().__init__(timeout=180)
-
-        self.author_id = author_id
+    def __init__(self, interaction, chunks, title):
+        super().__init__(timeout=120)
+        self.author_id = interaction.user.id
         self.chunks = chunks
+        self.title = title
         self.finished = False
 
-    async def interaction_check(
-        self,
-        interaction: discord.Interaction
-    ):
-
+    async def interaction_check(self, interaction: discord.Interaction):
         if interaction.user.id != self.author_id:
-
             await interaction.response.send_message(
                 "❌ このボタンはコマンドを実行した本人のみ使用できます。",
                 ephemeral=True
             )
-
             return False
 
         return True
 
     @discord.ui.button(
         label="全員出力",
-        style=discord.ButtonStyle.green
+        style=discord.ButtonStyle.success
     )
     async def output_all(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
-
         if self.finished:
+            await interaction.response.send_message(
+                "この操作はすでに終了しています。",
+                ephemeral=True
+            )
             return
 
         self.finished = True
 
+        for child in self.children:
+            child.disabled = True
+
         await interaction.response.edit_message(
-            content="📤 全員分を出力しています……",
-            view=None
+            embed=create_embed(
+                "📤 全員分を出力しています……",
+                "少し待ってください。"
+            ),
+            view=self
         )
 
         for index, chunk in enumerate(self.chunks):
+            embed = create_embed(
+                self.title if index == 0 else f"{self.title}（続き）",
+                chunk
+            )
 
-            try:
-
-                await interaction.followup.send(chunk)
-
-            except Exception:
-
-                print(
-                    f"Error while sending chunk {index + 1}:"
-                )
-
-                traceback.print_exc()
-
-                break
-
-        self.stop()
+            await interaction.followup.send(
+                embed=embed
+            )
 
     @discord.ui.button(
         label="ここで止める",
-        style=discord.ButtonStyle.red
+        style=discord.ButtonStyle.secondary
     )
     async def stop_output(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
-
         if self.finished:
+            await interaction.response.send_message(
+                "この操作はすでに終了しています。",
+                ephemeral=True
+            )
             return
 
         self.finished = True
 
+        for child in self.children:
+            child.disabled = True
+
         await interaction.response.edit_message(
-            content="⏹️ 出力を中止しました。",
-            view=None
+            embed=create_embed(
+                "⏹️ 出力を停止しました",
+                "ここまでの確認で終了します。"
+            ),
+            view=self
         )
 
-        self.stop()
-
-    async def on_timeout(self):
-
-        if not self.finished:
-            self.finished = True
-
-            self.stop()
-
-
-# =========================
-# 大量メンバー出力
-# =========================
 
 async def send_member_list(
     interaction: discord.Interaction,
-    title: str,
-    lines: list[str]
+    lines,
+    title="📋 Member List 👇"
 ):
-
     chunks = split_message(lines)
 
     if not chunks:
         await interaction.followup.send(
-            f"{title}\n\nメンバーはいません。"
+            embed=create_embed(
+                title,
+                "該当するメンバーはいません。"
+            )
         )
         return
 
-    # 1メッセージで収まる場合
     if len(chunks) == 1:
-
         await interaction.followup.send(
-            f"{title}\n\n{chunks[0]}"
+            embed=create_embed(
+                title,
+                chunks[0]
+            )
         )
-
         return
 
-    # 2000文字を超える場合
     view = OutputConfirmView(
-        interaction.user.id,
-        chunks
+        interaction,
+        chunks,
+        title
     )
 
     await interaction.followup.send(
-        f"{title}\n\n"
-        f"⚠️ メンバーが多いため、全員分を出力すると "
-        f"{len(chunks)}個のメッセージに分かれます。\n\n"
-        f"全員を出力しますか？",
+        embed=create_embed(
+            "📋 出力確認",
+            f"出力が **{len(chunks)}個** に分かれます。\n"
+            "全員分を出力しますか？"
+        ),
         view=view
     )
 
 
-# =========================
-# Bot Ready
-# =========================
-
 @bot.event
 async def on_ready():
-
-    print(
-        f"Logged in as {bot.user} ({bot.user.id})"
-    )
+    print(f"Logged in as {bot.user} ({bot.user.id})")
 
     try:
-
         synced = await bot.tree.sync()
-
-        print(
-            f"Synced {len(synced)} slash command(s)"
-        )
-
+        print(f"Synced {len(synced)} slash command(s)")
     except Exception:
-
         print("Slash command sync error:")
         traceback.print_exc()
 
-
-# =========================
-# /timeoutmemberslist
-# =========================
 
 @bot.tree.command(
     name="timeoutmemberslist",
     description="現在タイムアウトされているメンバーの一覧を表示します"
 )
-@discord.app_commands.default_permissions(
-    moderate_members=True
-)
-@discord.app_commands.checks.has_permissions(
-    moderate_members=True
-)
-async def timeoutmemberslist(
-    interaction: discord.Interaction
-):
-
+@discord.app_commands.default_permissions(moderate_members=True)
+@discord.app_commands.checks.has_permissions(moderate_members=True)
+async def timeoutmemberslist(interaction: discord.Interaction):
     try:
-
         await interaction.response.defer()
 
         guild = interaction.guild
 
         if guild is None:
-
             await interaction.followup.send(
                 "このコマンドはサーバー内でのみ使用できます。"
             )
-
             return
 
         members = await fetch_all_members(guild)
@@ -301,28 +228,23 @@ async def timeoutmemberslist(
         )
 
         now = datetime.now(timezone.utc)
-
         timeout_members = []
 
         for member in members:
-
             timeout_until = member.timed_out_until
 
-            if (
-                timeout_until is not None
-                and timeout_until > now
-            ):
-
+            if timeout_until is not None and timeout_until > now:
                 timeout_members.append(
                     (member, timeout_until)
                 )
 
         if not timeout_members:
-
             await interaction.followup.send(
-                "現在タイムアウトされているメンバーはいません。"
+                embed=create_embed(
+                    "🔇 Timeout Members",
+                    "現在タイムアウトされているメンバーはいません。"
+                )
             )
-
             return
 
         timeout_members.sort(
@@ -332,556 +254,44 @@ async def timeoutmemberslist(
         lines = []
 
         for member, timeout_until in timeout_members:
-
-            timestamp = int(
-                timeout_until.timestamp()
-            )
-
-            line = (
-                f"• {member.mention} "
-                f"・解除 <t:{timestamp}:R>"
-            )
-
-            lines.append(line)
-
-        chunks = split_message(lines)
-
-        total = len(timeout_members)
-
-        await interaction.followup.send(
-            f"🔇 **現在タイムアウト中のメンバー: {total}人**\n\n"
-            + chunks[0]
-        )
-
-        for chunk in chunks[1:]:
-
-            await interaction.followup.send(
-                chunk
-            )
-
-    except Exception:
-
-        print(
-            "Error in /timeoutmemberslist:"
-        )
-
-        traceback.print_exc()
-
-        if interaction.response.is_done():
-
-            await interaction.followup.send(
-                "❌ コマンドの実行中にエラーが発生しました。"
-            )
-
-        else:
-
-            await interaction.response.send_message(
-                "❌ コマンドの実行中にエラーが発生しました。"
-            )
-
-
-# =========================
-# /allmemberlistup
-# =========================
-
-@bot.tree.command(
-    name="allmemberlistup",
-    description="サーバーの全メンバーをロール順に一覧表示します"
-)
-async def allmemberlistup(
-    interaction: discord.Interaction
-):
-
-    try:
-
-        await interaction.response.defer()
-
-        guild = interaction.guild
-
-        if guild is None:
-
-            await interaction.followup.send(
-                "このコマンドはサーバー内でのみ使用できます。"
-            )
-
-            return
-
-        # =========================
-        # 全メンバー取得
-        # =========================
-
-        members = await fetch_all_members(guild)
-
-        print(
-            f"All member list requested in {guild.name}: "
-            f"{len(members)} members"
-        )
-
-        # =========================
-        # メンバーをIDで管理
-        # =========================
-
-        member_map = {
-            member.id: member
-            for member in members
-        }
-
-        # =========================
-        # ロールを上位から並べる
-        # =========================
-
-        roles = [
-            role
-            for role in guild.roles
-            if not role.is_default()
-        ]
-
-        roles.sort(
-            key=lambda role: role.position,
-            reverse=True
-        )
-
-        lines = []
-
-        # =========================
-        # ロール別に出力
-        # =========================
-
-        assigned_member_ids = set()
-
-        for role in roles:
-
-            role_members = [
-                member
-                for member in members
-                if role in member.roles
-            ]
-
-            if not role_members:
-                continue
-
-            role_members.sort(
-                key=lambda member: (
-                    member.display_name.lower(),
-                    member.id
-                )
-            )
+            timestamp = int(timeout_until.timestamp())
 
             lines.append(
-                f"【{role.name}】"
+                f"• {member.mention} ・解除 <t:{timestamp}:R>"
             )
-
-            for member in role_members:
-
-                lines.append(
-                    member.mention
-                )
-
-                assigned_member_ids.add(
-                    member.id
-                )
-
-            lines.append("")
-
-        # =========================
-        # ロールを持っていない人
-        # =========================
-
-        no_role_members = [
-            member
-            for member in members
-            if member.id not in assigned_member_ids
-        ]
-
-        if no_role_members:
-
-            no_role_members.sort(
-                key=lambda member: (
-                    member.display_name.lower(),
-                    member.id
-                )
-            )
-
-            lines.append(
-                "【ロールなし】"
-            )
-
-            for member in no_role_members:
-
-                lines.append(
-                    member.mention
-                )
-
-        # =========================
-        # 出力
-        # =========================
 
         await send_member_list(
             interaction,
-            "📋 **All Member List 👇**",
-            lines
+            lines,
+            "🔇 Timeout Members"
         )
 
     except Exception:
-
-        print(
-            "Error in /allmemberlistup:"
-        )
-
+        print("Error in /timeoutmemberslist:")
         traceback.print_exc()
 
         if interaction.response.is_done():
-
             await interaction.followup.send(
-                "❌ 全メンバー一覧の取得中にエラーが発生しました。"
+                embed=create_embed(
+                    "❌ Error",
+                    "コマンドの実行中にエラーが発生しました。"
+                )
             )
-
         else:
-
             await interaction.response.send_message(
-                "❌ 全メンバー一覧の取得中にエラーが発生しました。"
-            )
-
-
-# =========================
-# ロール選択View
-# =========================
-
-class RoleListView(discord.ui.View):
-
-    def __init__(
-        self,
-        author_id: int,
-        roles: list[discord.Role],
-        members: list[discord.Member]
-    ):
-
-        super().__init__(timeout=180)
-
-        self.author_id = author_id
-        self.roles = roles
-        self.members = members
-
-        self.page = 0
-        self.per_page = 20
-
-        self.update_buttons()
-
-    async def interaction_check(
-        self,
-        interaction: discord.Interaction
-    ):
-
-        if interaction.user.id != self.author_id:
-
-            await interaction.response.send_message(
-                "❌ このボタンはコマンドを実行した本人のみ使用できます。",
-                ephemeral=True
-            )
-
-            return False
-
-        return True
-
-    def update_buttons(self):
-
-        self.clear_items()
-
-        start = self.page * self.per_page
-
-        end = start + self.per_page
-
-        page_roles = self.roles[start:end]
-
-        for role in page_roles:
-
-            label = role.name
-
-            if len(label) > 80:
-                label = label[:77] + "..."
-
-            button = discord.ui.Button(
-                label=label,
-                style=discord.ButtonStyle.secondary
-            )
-
-            async def callback(
-                interaction: discord.Interaction,
-                selected_role=role
-            ):
-
-                await self.show_role(
-                    interaction,
-                    selected_role
-                )
-
-            button.callback = callback
-
-            self.add_item(button)
-
-        # ページ操作
-        if len(self.roles) > self.per_page:
-
-            previous_button = discord.ui.Button(
-                label="◀ 前へ",
-                style=discord.ButtonStyle.primary,
-                disabled=(self.page == 0)
-            )
-
-            async def previous_callback(
-                interaction: discord.Interaction
-            ):
-
-                self.page -= 1
-
-                self.update_buttons()
-
-                await interaction.response.edit_message(
-                    content=self.page_text(),
-                    view=self
-                )
-
-            previous_button.callback = previous_callback
-
-            next_button = discord.ui.Button(
-                label="次へ ▶",
-                style=discord.ButtonStyle.primary,
-                disabled=(
-                    (self.page + 1)
-                    * self.per_page
-                    >= len(self.roles)
+                embed=create_embed(
+                    "❌ Error",
+                    "コマンドの実行中にエラーが発生しました。"
                 )
             )
 
-            async def next_callback(
-                interaction: discord.Interaction
-            ):
-
-                self.page += 1
-
-                self.update_buttons()
-
-                await interaction.response.edit_message(
-                    content=self.page_text(),
-                    view=self
-                )
-
-            next_button.callback = next_callback
-
-            self.add_item(previous_button)
-            self.add_item(next_button)
-
-    def page_text(self):
-
-        total_pages = (
-            (len(self.roles) + self.per_page - 1)
-            // self.per_page
-        )
-
-        return (
-            "📋 **表示するロールを選択してください。**\n\n"
-            f"ページ {self.page + 1}/{total_pages}"
-        )
-
-    async def show_role(
-        self,
-        interaction: discord.Interaction,
-        role: discord.Role
-    ):
-
-        role_members = [
-            member
-            for member in self.members
-            if role in member.roles
-        ]
-
-        role_members.sort(
-            key=lambda member: (
-                member.display_name.lower(),
-                member.id
-            )
-        )
-
-        lines = [
-            f"【{role.name}】"
-        ]
-
-        for member in role_members:
-
-            lines.append(
-                member.mention
-            )
-
-        chunks = split_message(lines)
-
-        self.stop()
-
-        # メンバーなし
-        if len(role_members) == 0:
-
-            await interaction.response.edit_message(
-                content=(
-                    f"【{role.name}】\n\n"
-                    "このロールを持っているメンバーはいません。"
-                ),
-                view=None
-            )
-
-            return
-
-        # 1メッセージで収まる
-        if len(chunks) == 1:
-
-            await interaction.response.edit_message(
-                content=chunks[0],
-                view=None
-            )
-
-            return
-
-        # 2000文字超過
-        view = OutputConfirmView(
-            interaction.user.id,
-            chunks
-        )
-
-        await interaction.response.edit_message(
-            content=(
-                f"【{role.name}】\n\n"
-                f"⚠️ このロールには "
-                f"{len(role_members)}人います。\n"
-                f"全員出力すると "
-                f"{len(chunks)}個のメッセージに分かれます。\n\n"
-                f"全員を出力しますか？"
-            ),
-            view=view
-        )
-
-    async def on_timeout(self):
-
-        self.stop()
-
-
-# =========================
-# /rolelistup
-# =========================
-
-@bot.tree.command(
-    name="rolelistup",
-    description="ロールを選択して、そのロールのメンバー一覧を表示します"
-)
-async def rolelistup(
-    interaction: discord.Interaction
-):
-
-    try:
-
-        await interaction.response.defer()
-
-        guild = interaction.guild
-
-        if guild is None:
-
-            await interaction.followup.send(
-                "このコマンドはサーバー内でのみ使用できます。"
-            )
-
-            return
-
-        # =========================
-        # 全メンバー取得
-        # =========================
-
-        members = await fetch_all_members(guild)
-
-        print(
-            f"Role list requested in {guild.name}: "
-            f"{len(members)} members"
-        )
-
-        # =========================
-        # ロールを上位から並べる
-        # =========================
-
-        roles = [
-            role
-            for role in guild.roles
-            if not role.is_default()
-        ]
-
-        roles.sort(
-            key=lambda role: role.position,
-            reverse=True
-        )
-
-        # メンバーが1人もいないロールは
-        # 選択肢から除外
-        roles = [
-            role
-            for role in roles
-            if any(
-                role in member.roles
-                for member in members
-            )
-        ]
-
-        if not roles:
-
-            await interaction.followup.send(
-                "このサーバーにはメンバーが所属しているロールがありません。"
-            )
-
-            return
-
-        # =========================
-        # ロール選択画面
-        # =========================
-
-        view = RoleListView(
-            interaction.user.id,
-            roles,
-            members
-        )
-
-        await interaction.followup.send(
-            view.page_text(),
-            view=view
-        )
-
-    except Exception:
-
-        print(
-            "Error in /rolelistup:"
-        )
-
-        traceback.print_exc()
-
-        if interaction.response.is_done():
-
-            await interaction.followup.send(
-                "❌ ロール一覧の取得中にエラーが発生しました。"
-            )
-
-        else:
-
-            await interaction.response.send_message(
-                "❌ ロール一覧の取得中にエラーが発生しました。"
-            )
-
-
-# =========================
-# Command Error Handler
-# =========================
 
 @timeoutmemberslist.error
 async def timeoutmemberslist_error(
     interaction: discord.Interaction,
     error
 ):
-
-    print(
-        "Slash command permission/error:"
-    )
+    print("Slash command permission/error:")
 
     traceback.print_exception(
         type(error),
@@ -893,44 +303,375 @@ async def timeoutmemberslist_error(
         error,
         discord.app_commands.errors.MissingPermissions
     ):
-
         message = (
             "❌ このコマンドを使用するには "
             "**メンバーをタイムアウト** 権限が必要です。"
         )
-
     else:
-
-        message = (
-            "❌ コマンドの実行中にエラーが発生しました。"
-        )
+        message = "❌ コマンドの実行中にエラーが発生しました。"
 
     if interaction.response.is_done():
+        await interaction.followup.send(message)
+    else:
+        await interaction.response.send_message(message)
+
+
+class RoleListView(discord.ui.View):
+    def __init__(self, interaction, roles, members):
+        super().__init__(timeout=180)
+
+        self.author_id = interaction.user.id
+        self.roles = roles
+        self.members = members
+
+        self.page = 0
+        self.per_page = 20
+
+        self.update_buttons()
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ このボタンはコマンドを実行した本人のみ使用できます。",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    def max_page(self):
+        if not self.roles:
+            return 1
+
+        return (
+            len(self.roles) + self.per_page - 1
+        ) // self.per_page
+
+    def current_roles(self):
+        start = self.page * self.per_page
+        end = start + self.per_page
+
+        return self.roles[start:end]
+
+    def page_text(self):
+        current_roles = self.current_roles()
+
+        if not current_roles:
+            return "ロールがありません。"
+
+        lines = [
+            "📋 **Role List**",
+            "",
+            "確認したいロールのボタンを押してください。",
+            ""
+        ]
+
+        for role in current_roles:
+            lines.append(
+                f"**{role.name}**"
+            )
+
+        lines.append("")
+        lines.append(
+            f"ページ {self.page + 1} / {self.max_page()}"
+        )
+
+        return "\n".join(lines)
+
+    def update_buttons(self):
+        self.clear_items()
+
+        current_roles = self.current_roles()
+
+        for role in current_roles:
+            button = discord.ui.Button(
+                label=role.name[:80],
+                style=discord.ButtonStyle.secondary
+            )
+
+            async def callback(
+                interaction: discord.Interaction,
+                selected_role=role
+            ):
+                role_members = [
+                    member
+                    for member in self.members
+                    if selected_role in member.roles
+                ]
+
+                role_members.sort(
+                    key=lambda member:
+                    member.display_name.lower()
+                )
+
+                lines = [
+                    member.mention
+                    for member in role_members
+                ]
+
+                if not lines:
+                    await interaction.response.send_message(
+                        embed=create_embed(
+                            f"👥 {selected_role.name}",
+                            "このロールを持っているメンバーはいません。"
+                        ),
+                        ephemeral=True
+                    )
+                    return
+
+                chunks = split_message(lines)
+
+                if len(chunks) == 1:
+                    await interaction.response.send_message(
+                        embed=create_embed(
+                            f"👥 {selected_role.name}",
+                            chunks[0]
+                        )
+                    )
+                    return
+
+                view = OutputConfirmView(
+                    interaction,
+                    chunks,
+                    f"👥 {selected_role.name}"
+                )
+
+                await interaction.response.send_message(
+                    embed=create_embed(
+                        "📋 出力確認",
+                        f"このロールのメンバー一覧は "
+                        f"**{len(chunks)}個** に分かれます。\n"
+                        "全員分を出力しますか？"
+                    ),
+                    view=view
+                )
+
+            button.callback = callback
+            self.add_item(button)
+
+        previous_button = discord.ui.Button(
+            label="◀ 前へ",
+            style=discord.ButtonStyle.primary,
+            disabled=(self.page <= 0)
+        )
+
+        async def previous_callback(
+            interaction: discord.Interaction
+        ):
+            self.page -= 1
+            self.update_buttons()
+
+            await interaction.response.edit_message(
+                content=self.page_text(),
+                view=self
+            )
+
+        previous_button.callback = previous_callback
+        self.add_item(previous_button)
+
+        next_button = discord.ui.Button(
+            label="次へ ▶",
+            style=discord.ButtonStyle.primary,
+            disabled=(
+                self.page >= self.max_page() - 1
+            )
+        )
+
+        async def next_callback(
+            interaction: discord.Interaction
+        ):
+            self.page += 1
+            self.update_buttons()
+
+            await interaction.response.edit_message(
+                content=self.page_text(),
+                view=self
+            )
+
+        next_button.callback = next_callback
+        self.add_item(next_button)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+
+@bot.tree.command(
+    name="rolelistup",
+    description="サーバーのロール一覧を表示します"
+)
+async def rolelistup(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer()
+
+        guild = interaction.guild
+
+        if guild is None:
+            await interaction.followup.send(
+                "このコマンドはサーバー内でのみ使用できます。"
+            )
+            return
+
+        members = await fetch_all_members(guild)
+
+        roles = [
+            role
+            for role in guild.roles
+            if not role.is_default()
+        ]
+
+        roles.sort(
+            key=lambda role: role.position,
+            reverse=True
+        )
+
+        view = RoleListView(
+            interaction,
+            roles,
+            members
+        )
 
         await interaction.followup.send(
-            message
+            content=view.page_text(),
+            view=view
         )
 
-    else:
+    except Exception:
+        print("Error in /rolelistup:")
+        traceback.print_exc()
 
-        await interaction.response.send_message(
-            message
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                embed=create_embed(
+                    "❌ Error",
+                    "コマンドの実行中にエラーが発生しました。"
+                )
+            )
+        else:
+            await interaction.response.send_message(
+                embed=create_embed(
+                    "❌ Error",
+                    "コマンドの実行中にエラーが発生しました。"
+                )
+            )
+
+
+@bot.tree.command(
+    name="allmemberlistup",
+    description="サーバー全員のメンバーをロール別に表示します"
+)
+async def allmemberlistup(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer()
+
+        guild = interaction.guild
+
+        if guild is None:
+            await interaction.followup.send(
+                "このコマンドはサーバー内でのみ使用できます。"
+            )
+            return
+
+        members = await fetch_all_members(guild)
+
+        roles = [
+            role
+            for role in guild.roles
+            if not role.is_default()
+        ]
+
+        roles.sort(
+            key=lambda role: role.position,
+            reverse=True
         )
 
+        lines = [
+            "📋 **All Member List 👇**"
+        ]
 
-# =========================
-# Render HTTP Server
-# =========================
+        assigned_member_ids = set()
+
+        for role in roles:
+            role_members = [
+                member
+                for member in members
+                if role in member.roles
+            ]
+
+            if not role_members:
+                continue
+
+            role_members.sort(
+                key=lambda member:
+                member.display_name.lower()
+            )
+
+            lines.append("")
+            lines.append(
+                f"**@ {role.name}**"
+            )
+
+            for member in role_members:
+                lines.append(
+                    member.mention
+                )
+                assigned_member_ids.add(member.id)
+
+        no_role_members = [
+            member
+            for member in members
+            if member.id not in assigned_member_ids
+        ]
+
+        no_role_members.sort(
+            key=lambda member:
+            member.display_name.lower()
+        )
+
+        if no_role_members:
+            lines.append("")
+            lines.append(
+                "**【ロールなし】**"
+            )
+
+            for member in no_role_members:
+                lines.append(
+                    member.mention
+                )
+
+        await send_member_list(
+            interaction,
+            lines,
+            "📋 All Member List 👇"
+        )
+
+    except Exception:
+        print("Error in /allmemberlistup:")
+        traceback.print_exc()
+
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                embed=create_embed(
+                    "❌ Error",
+                    "コマンドの実行中にエラーが発生しました。"
+                )
+            )
+        else:
+            await interaction.response.send_message(
+                embed=create_embed(
+                    "❌ Error",
+                    "コマンドの実行中にエラーが発生しました。"
+                )
+            )
+
 
 async def health(request):
-
     return web.Response(
         text="Discord bot is running!"
     )
 
 
 async def start_web_server():
-
     app = web.Application()
 
     app.router.add_get(
@@ -962,17 +703,10 @@ async def start_web_server():
     )
 
 
-# =========================
-# Main
-# =========================
-
 async def main():
-
     await start_web_server()
-
     await bot.start(DISCORD_TOKEN)
 
 
 if __name__ == "__main__":
-
     asyncio.run(main())
