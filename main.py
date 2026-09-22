@@ -22,7 +22,6 @@ MAX_MESSAGE_LENGTH = 1900
 
 # Bot全体で共有されるEmbedカラー
 EMBED_COLOR = discord.Color.green()
-DEFAULT_EMBED_COLOR = discord.Color.green()
 
 # Bot開発者本人のDiscord User ID
 # ↓ここを自分のDiscord User IDに変更してください
@@ -50,7 +49,7 @@ def is_developer(interaction: discord.Interaction):
 
 
 COLOR_CHOICES = [
-    discord.app_commands.Choice(name="□ Default", value="DEFAULT_EMBED_COLOR"),
+    discord.app_commands.Choice(name="□ Default", value="35C774"),
     discord.app_commands.Choice(name="🔴 Red", value="FF0000"),
     discord.app_commands.Choice(name="🟠 Orange", value="FF8000"),
     discord.app_commands.Choice(name="🟡 Yellow", value="FFFF00"),
