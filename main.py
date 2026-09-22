@@ -419,7 +419,7 @@ class RoleListView(discord.ui.View):
 
                 if len(chunks) == 1:
                     await interaction.response.send_message(
-                        content=chunks[0]
+                        content=f"👥 {selected_role.name}\n\n{chunks[0]}"
                     )
                     return
 
