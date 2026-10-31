@@ -922,7 +922,7 @@ class MemberNameSearchView(discord.ui.View):
 
     @discord.ui.button(
         label="Server",
-        style=discord.ButtonStyle.primary
+        style=discord.ButtonStyle.secondary
     )
     async def server_button(
         self,
@@ -944,7 +944,7 @@ class MemberNameSearchView(discord.ui.View):
 
 
 @bot.tree.command(
-    name="membernamesearch",
+    name="searchmembername",
     description="名前でサーバーメンバーを検索します"
 )
 @discord.app_commands.describe(
