@@ -543,18 +543,21 @@ class RoleListView(discord.ui.View):
                     member.display_name.lower()
                 )
 
+                # 一覧の先頭に、選択したロール名と所属人数を表示する。
+                header = (
+                    f"👥 **選択したロール：{selected_role.name}**\n"
+                    f"👤 **メンバー人数：{len(role_members)}人**\n"
+                    "━━━━━━━━━━━━━━━━━━"
+                )
+
                 lines = [
-                    member.mention
-                    for member in role_members
+                    header,
+                    *[member.mention for member in role_members]
                 ]
 
-                if not lines:
+                if not role_members:
                     await interaction.response.send_message(
-                        embed=create_embed(
-                            f"👥 {selected_role.name}",
-                            "このロールを持っているメンバーはいません。"
-                        ),
-                        ephemeral=True
+                        content=header + "\nこのロールを持っているメンバーはいません。"
                     )
                     return
 
@@ -562,7 +565,7 @@ class RoleListView(discord.ui.View):
 
                 if len(chunks) == 1:
                     await interaction.response.send_message(
-                        content=f"👥 {selected_role.name}\n{chunks[0]}"
+                        content=chunks[0]
                     )
                     return
 
@@ -575,8 +578,9 @@ class RoleListView(discord.ui.View):
                 await interaction.response.send_message(
                     embed=create_embed(
                         "📋 出力確認",
-                        f"このロールのメンバー一覧は "
-                        f"**{len(chunks)}個** に分かれます。\n"
+                        f"選択したロール：**{selected_role.name}**\n"
+                        f"メンバー人数：**{len(role_members)}人**\n"
+                        f"一覧は **{len(chunks)}個** に分かれます。\n"
                         "全員分を出力しますか？"
                     ),
                     view=view
