@@ -801,6 +801,194 @@ async def allmemberlistup(interaction: discord.Interaction):
             )
 
 
+# =========================
+# Member Name Search
+# =========================
+
+class MemberNameSearchView(discord.ui.View):
+    def __init__(self, interaction: discord.Interaction, keyword: str):
+        super().__init__(timeout=180)
+        self.author_id = interaction.user.id
+        self.guild_id = interaction.guild_id
+        self.keyword = keyword
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "❌ このボタンは検索コマンドを実行した本人のみ使用できます。",
+                ephemeral=True
+            )
+            return False
+        return True
+
+    async def search_members(
+        self,
+        interaction: discord.Interaction,
+        search_type: str
+    ):
+        guild = interaction.guild
+        if guild is None or guild.id != self.guild_id:
+            await interaction.response.send_message(
+                "❌ サーバー情報を取得できませんでした。もう一度コマンドを実行してください。",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer()
+
+        try:
+            members = await fetch_all_members(guild)
+            keyword = self.keyword.casefold()
+
+            if search_type == "server":
+                matches = [
+                    member for member in members
+                    if keyword in member.display_name.casefold()
+                ]
+                title = f"🔎 Server検索: {self.keyword}"
+            else:
+                # Mention検索は、Discordのアカウント名（username）を対象にする。
+                # メンションは検索結果に表示名と一緒に出力する。
+                matches = [
+                    member for member in members
+                    if keyword in member.name.casefold()
+                ]
+                title = f"🔎 Mention検索: {self.keyword}"
+
+            matches.sort(
+                key=lambda member: (
+                    member.display_name.casefold(),
+                    member.name.casefold(),
+                    member.id
+                )
+            )
+
+            lines = [
+                f"• {member.mention} ・表示名: **{member.display_name}**"
+                f" ・アカウント名: `{member.name}`"
+                for member in matches
+            ]
+
+            if not lines:
+                await interaction.followup.send(
+                    embed=create_embed(
+                        title,
+                        f"「{self.keyword}」に一致するメンバーはいませんでした。"
+                    ),
+                    view=self
+                )
+                return
+
+            # 検索結果と一緒にServer/Mentionボタンも残し、
+            # もう一方の検索方法へすぐ切り替えられるようにする。
+            chunks = split_message(lines)
+            if len(chunks) == 1:
+                await interaction.followup.send(
+                    content=chunks[0],
+                    embed=create_embed(
+                        title,
+                        f"検索結果: **{len(matches)}人**\n下のボタンで検索方法を切り替えられます。"
+                    ),
+                    view=self
+                )
+            else:
+                # 大量の結果は既存の分割出力機能を使う。
+                # 検索切り替えボタンは、この案内メッセージに残す。
+                await interaction.followup.send(
+                    embed=create_embed(
+                        title,
+                        f"検索結果: **{len(matches)}人**（{len(chunks)}個に分割）\n"
+                        "結果を出力する場合は、下のボタンを押してください。\n"
+                        "検索方法を変える場合は Server / Mention を押してください。"
+                    ),
+                    view=self
+                )
+                await send_member_list(
+                    interaction,
+                    lines,
+                    title
+                )
+
+        except Exception:
+            print(f"Error in member name search ({search_type}):")
+            traceback.print_exc()
+            await interaction.followup.send(
+                embed=create_embed(
+                    "❌ Error",
+                    "名前検索中にエラーが発生しました。"
+                ),
+                ephemeral=True
+            )
+
+    @discord.ui.button(
+        label="Server",
+        style=discord.ButtonStyle.primary
+    )
+    async def server_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.search_members(interaction, "server")
+
+    @discord.ui.button(
+        label="Mention",
+        style=discord.ButtonStyle.secondary
+    )
+    async def mention_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.search_members(interaction, "mention")
+
+
+@bot.tree.command(
+    name="membernamesearch",
+    description="名前でサーバーメンバーを検索します"
+)
+@discord.app_commands.describe(
+    name="検索したい名前（アカウント名またはサーバー表示名）"
+)
+async def membernamesearch(
+    interaction: discord.Interaction,
+    name: str
+):
+    guild = interaction.guild
+    if guild is None:
+        await interaction.response.send_message(
+            "このコマンドはサーバー内でのみ使用できます。",
+            ephemeral=True
+        )
+        return
+
+    keyword = name.strip()
+    if not keyword:
+        await interaction.response.send_message(
+            embed=create_embed(
+                "🔎 Member Name Search",
+                "検索する名前を入力してください。"
+            ),
+            ephemeral=True
+        )
+        return
+
+    view = MemberNameSearchView(interaction, keyword)
+    await interaction.response.send_message(
+        embed=create_embed(
+            "🔎 Member Name Search",
+            f"「{keyword}」をどちらの名前で検索しますか？\n\n"
+            "**Server**：サーバー内だけの表示名\n"
+            "**Mention**：Discordアカウント名（フレンド申請に使う名前）\n\n"
+            "検索したい方のボタンを押してください。"
+        ),
+        view=view
+    )
+
+    # コマンド実行者以外が押せないようにしつつ、本人が再検索できるようにする。
+    # Viewのタイムアウトは180秒。
+
+
 async def health(request):
     return web.Response(
         text="Discord bot is running!"
