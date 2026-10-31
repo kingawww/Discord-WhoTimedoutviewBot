@@ -506,8 +506,9 @@ class RoleListView(discord.ui.View):
         ]
 
         for role in current_roles:
+            role_name = role.name if role is not None else "Non Role"
             lines.append(
-                f"**{role.name}**"
+                f"**{role_name}**"
             )
 
         lines.append("")
@@ -523,8 +524,9 @@ class RoleListView(discord.ui.View):
         current_roles = self.current_roles()
 
         for role in current_roles:
+            role_name = role.name if role is not None else "Non Role"
             button = discord.ui.Button(
-                label=role.name[:80],
+                label=role_name[:80],
                 style=discord.ButtonStyle.secondary
             )
 
@@ -532,11 +534,21 @@ class RoleListView(discord.ui.View):
                 interaction: discord.Interaction,
                 selected_role=role
             ):
-                role_members = [
-                    member
-                    for member in self.members
-                    if selected_role in member.roles
-                ]
+                if selected_role is None:
+                    # @everyone 以外のロールを1つも持っていないメンバー
+                    role_members = [
+                        member
+                        for member in self.members
+                        if len(member.roles) == 1
+                    ]
+                    selected_role_name = "Non Role"
+                else:
+                    role_members = [
+                        member
+                        for member in self.members
+                        if selected_role in member.roles
+                    ]
+                    selected_role_name = selected_role.name
 
                 role_members.sort(
                     key=lambda member:
@@ -545,8 +557,8 @@ class RoleListView(discord.ui.View):
 
                 # 一覧の先頭に、選択したロール名と所属人数を表示する。
                 header = (
-                    f"👥 **選択したロール：{selected_role.name}**\n"
-                    f"👤 **メンバー人数：{len(role_members)}人**\n"
+                    f"👥 **選択したロール：{selected_role_name}**\\n"
+                    f"👤 **メンバー人数：{len(role_members)}人**\\n"
                     "━━━━━━━━━━━━━━━━━━"
                 )
 
@@ -557,7 +569,7 @@ class RoleListView(discord.ui.View):
 
                 if not role_members:
                     await interaction.response.send_message(
-                        content=header + "\nこのロールを持っているメンバーはいません。"
+                        content=header + "\\n該当するメンバーはいません。"
                     )
                     return
 
@@ -572,15 +584,15 @@ class RoleListView(discord.ui.View):
                 view = OutputConfirmView(
                     interaction,
                     chunks,
-                    f"👥 {selected_role.name}"
+                    f"👥 {selected_role_name}"
                 )
 
                 await interaction.response.send_message(
                     embed=create_embed(
                         "📋 出力確認",
-                        f"選択したロール：**{selected_role.name}**\n"
-                        f"メンバー人数：**{len(role_members)}人**\n"
-                        f"一覧は **{len(chunks)}個** に分かれます。\n"
+                        f"選択したロール：**{selected_role_name}**\\n"
+                        f"メンバー人数：**{len(role_members)}人**\\n"
+                        f"一覧は **{len(chunks)}個** に分かれます。\\n"
                         "全員分を出力しますか？"
                     ),
                     view=view
@@ -664,7 +676,7 @@ async def rolelistup(interaction: discord.Interaction):
             key=lambda role: role.position,
             reverse=True
         )
-
+        roles.append(None)  # ロールなしメンバー検索用の「Non Role」\n
         view = RoleListView(
             interaction,
             roles,
@@ -724,7 +736,7 @@ async def allmemberlistup(interaction: discord.Interaction):
             key=lambda role: role.position,
             reverse=True
         )
-
+        roles.append(None)  # ロールなしメンバー検索用の「Non Role」\n
         lines = [
             "📋 **All Member List 👇**"
         ]
